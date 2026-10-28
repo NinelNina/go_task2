@@ -1,4 +1,4 @@
-package main
+package ledger
 
 import (
 	"encoding/json"
@@ -14,10 +14,10 @@ type Budget struct {
 
 func (b Budget) Validate() error {
 	if b.Limit <= 0 {
-		return errors.New("Limit must be greater than zero")
+		return errors.New("limit must be greater than zero")
 	}
 	if b.Category == "" {
-		return errors.New("Category cannot be empty")
+		return errors.New("category cannot be empty")
 	}
 	return nil
 }
@@ -47,4 +47,12 @@ func LoadBudgets(r io.Reader) error {
 		}
 	}
 	return nil
+}
+
+func ListBudgets() []Budget {
+	budgetsList := make([]Budget, 0, len(budgets))
+	for _, budget := range budgets {
+		budgetsList = append(budgetsList, budget)
+	}
+	return budgetsList
 }

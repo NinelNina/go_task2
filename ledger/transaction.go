@@ -1,9 +1,11 @@
-package main
+package ledger
 
 import (
 	"errors"
 	"time"
 )
+
+var ErrBudgetExceeded = errors.New("budget exceeded")
 
 type Transaction struct {
 	ID          int
@@ -15,10 +17,10 @@ type Transaction struct {
 
 func (tx Transaction) Validate() error {
 	if tx.Amount <= 0 {
-		return errors.New("Amount must be greater than zero")
+		return errors.New("amount must be greater than zero")
 	}
 	if tx.Category == "" {
-		return errors.New("Category cannot be empty")
+		return errors.New("category cannot be empty")
 	}
 	return nil
 }
@@ -38,7 +40,7 @@ func AddTransaction(tx Transaction) error {
 			}
 		}
 		if expensesAmount > budget.Limit {
-			return errors.New("Expenses amount is greater than budget limit")
+			return ErrBudgetExceeded
 		}
 	}
 

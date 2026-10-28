@@ -1,147 +1,192 @@
 # Ledger & Gateway Service
 
-Учебный проект на языке Go, состоящий из двух независимых микросервисов:
+Учебный проект на языке Go, состоящий из двух модулей в одном репозитории:
 
-* **Gateway**: HTTP-шлюз для приёма входящих клиентских запросов.
-* **Ledger**: сервис управления финансовыми транзакциями, учёта бюджетов по категориям и бизнес-логики валидации расходов.
+* **Gateway** — HTTP-сервер (REST API) для приёма клиентских запросов. Импортирует модуль `ledger` и вызывает его функции.
+* **Ledger** — библиотека бизнес-логики: учёт транзакций, бюджеты по категориям и валидация. Данные хранятся в памяти.
 
 ## Структура проекта
 
 ```text
 go_task2/
-├── gateway/              # Сервис Gateway
+├── go.work                    # объединяет модули gateway и ledger
+├── gateway/                   # HTTP-слой
 │   ├── go.mod
+│   ├── main.go                # роутер, маршруты, запуск сервера на :8080
+│   └── internal/api/
+│       ├── dto.go             # DTO запросов/ответов и функции-преобразователи
+│       ├── handlers.go        # обработчики эндпоинтов, writeJSON / writeError
+│       └── middleware.go      # middleware логирования запросов
+├── ledger/                    # бизнес-логика
+│   ├── go.mod
+│   ├── budget.go              # Budget, SetBudget, ListBudgets, LoadBudgets
+│   ├── transaction.go         # Transaction, AddTransaction, ListTransactions, ErrBudgetExceeded
+│   ├── validatable.go         # интерфейс Validatable и функция CheckValid
+│   ├── budgets.json           # пример файла с лимитами категорий
 │   └── main.go
-├── ledger/               # Сервис Ledger
-│   ├── budget.go         # Структура Budget, логика бюджетов и валидация
-│   ├── transaction.go    # Структура Transaction, логика транзакций и валидация
-│   ├── validatable.go    # Интерфейс Validatable и функция CheckValid
-│   ├── budgets.json      # Файл с лимитами категорий
-│   ├── go.mod
-│   └── main.go           # Точка входа сервиса Ledger
 ├── .gitignore
 └── README.md
 ```
 
 ## Требования
 
-* Установленный компилятор **Go** (версии 1.20 или выше).
-* Терминал (Bash / Zsh / PowerShell) или утилита `curl` для проверки HTTP-эндпоинтов.
+* **Go** версии 1.22 или выше (используются шаблоны маршрутов с методами в `http.ServeMux`).
+* Утилита `curl` для проверки эндпоинтов.
 
-## Функционал сервиса Ledger
+## Запуск
 
-1. **Модели данных**:
-   - `Transaction`: сущность транзакции с полями `ID`, `Amount`, `Category`, `Description`, `Date`.
-   - `Budget`: сущность лимита с полями `Category` и `Limit` (поддерживает JSON-теги).
-2. **Хранение данных в памяти**:
-   - Транзакции: срез `[]Transaction` с автоинкрементом идентификаторов.
-   - Бюджеты: хэш-таблица `map[string]Budget` для быстрого поиска ограничений по названию категории.
-3. **Бизнес-правила и контроль лимитов**:
-   - Перед добавлением данных (`AddTransaction`, `SetBudget`) обязательно вызывается метод `Validate()`. Некорректные объекты сразу отклоняются.
-   - Если для категории транзакции задан бюджет, сервис вычисляет накопленную сумму трат с учётом новой операции. Если сумма превышает установленный лимит, транзакция отклоняется с ошибкой и не сохраняется в памяти.
-4. **Импорт бюджетов из потока (`LoadBudgets`)**:
-   - Функция принимает абстрактный `io.Reader` и парсит входящий массив JSON-объектов через `json.NewDecoder`.
-   - Каждый загруженный бюджет проходит валидацию перед сохранением в память.
-   - В точке входа `main` файл `budgets.json` открывается через `os.Open` и оборачивается в буферизованный ридер `bufio.NewReader`.
-5. **Контракт валидации (`Validatable`)**:
-   - Интерфейс `Validatable` с методом `Validate() error` изолирует проверку корректности данных от бизнес-логики сервиса.
-   - Для `Transaction`: проверяет, что `Amount > 0` и `Category` не пустая.
-   - Для `Budget`: проверяет, что `Limit > 0` и `Category` не пустая.
-   - Методы только возвращают `error` (без логирования внутри).
-6. **Полиморфизм интерфейсов (`CheckValid`)**:
-   - Функция `CheckValid(v Validatable) error` демонстрирует полиморфизм в Go: принимает любой тип, реализующий контракт `Validatable`, и выполняет валидацию без приведения типов.
+Модули связаны через `go.work`, поэтому дополнительная настройка `go.mod` не нужна.
 
-## Валидация и интерфейс `Validatable`
-
-Для разделения логики валидации и бизнес-логики реализован интерфейс:
-
-```go
-type Validatable interface {
-    Validate() error
-}
+```bash
+cd gateway
+go run .
 ```
 
-- Transaction.Validate(): проверяет, что сумма Amount > 0 и категория Category не пустая.
-- Budget.Validate(): проверяет, что лимит Limit > 0 и категория Category не пустая.
-- CheckValid(v Validatable) error: полиморфная функция проверки любого объекта, реализующего контракт Validatable.
+Сервер запускается на порту `:8080`:
+
+```text
+2026/10/29 00:13:42 Gateway listening on :8080
+```
+
+## API
+
+Все эндпоинты имеют префикс `/api`. Ответы возвращаются в формате JSON с заголовком `Content-Type: application/json; charset=utf-8`.
+
+| Метод  | Путь                | Описание                     | Успешный ответ |
+|--------|---------------------|------------------------------|----------------|
+| `POST` | `/api/transactions` | Создать транзакцию           | `201 Created`  |
+| `GET`  | `/api/transactions` | Список всех транзакций       | `200 OK`       |
+| `POST` | `/api/budgets`      | Создать или обновить бюджет  | `201 Created`  |
+| `GET`  | `/api/budgets`      | Список всех бюджетов         | `200 OK`       |
+
+### Формат ошибок
+
+Все ошибки возвращаются в едином формате:
+
+```json
+{"error": "описание ошибки"}
+```
+
+| Статус                      | Когда возникает                                                         |
+|-----------------------------|-------------------------------------------------------------------------|
+| `400 Bad Request`           | некорректный JSON, неверный формат даты, не пройдена валидация           |
+| `409 Conflict`              | транзакция превышает бюджет категории (`{"error":"budget exceeded"}`)   |
+| `500 Internal Server Error` | прочие внутренние ошибки                                                |
+
+### POST /api/transactions
+
+Тело запроса (дата в формате `YYYY-MM-DD`):
+
+```bash
+curl -X POST http://localhost:8080/api/transactions \
+  -H "Content-Type: application/json" \
+  -d '{"amount":450,"category":"еда","description":"ланч","date":"2025-09-10"}'
+```
+
+Ответ `201 Created`:
+
+```json
+{"id":1,"amount":450,"category":"еда","description":"ланч","date":"2025-09-10T00:00:00Z"}
+```
+
+Ошибка валидации, `400 Bad Request`:
+
+```bash
+curl -X POST http://localhost:8080/api/transactions \
+  -H "Content-Type: application/json" \
+  -d '{"amount":-5,"category":"еда","description":"ошибка","date":"2025-09-10"}'
+```
+
+```json
+{"error":"amount must be greater than zero"}
+```
+
+### GET /api/transactions
+
+```bash
+curl http://localhost:8080/api/transactions
+```
+
+Ответ `200 OK` — массив транзакций. Если транзакций нет, возвращается пустой массив `[]`.
+
+### POST /api/budgets
+
+Повторный запрос с той же категорией обновляет лимит.
+
+```bash
+curl -X POST http://localhost:8080/api/budgets \
+  -H "Content-Type: application/json" \
+  -d '{"category":"транспорт","limit":1000}'
+```
+
+Ответ `201 Created`:
+
+```json
+{"category":"транспорт","limit":1000}
+```
+
+Превышение бюджета, `409 Conflict`:
+
+```bash
+curl -X POST http://localhost:8080/api/transactions \
+  -H "Content-Type: application/json" \
+  -d '{"amount":1500,"category":"транспорт","description":"такси","date":"2025-09-11"}'
+```
+
+```json
+{"error":"budget exceeded"}
+```
+
+### GET /api/budgets
+
+```bash
+curl http://localhost:8080/api/budgets
+```
+
+Ответ `200 OK` — массив бюджетов (или `[]`). Порядок элементов не гарантирован, так как бюджеты хранятся в `map`.
+
+### Проверка в Windows PowerShell
+
+В PowerShell `curl` — это псевдоним `Invoke-WebRequest`, поэтому для примеров выше используйте `curl.exe` или Git Bash.
+
+## Логирование
+
+Middleware `Logging` (`func(next http.Handler) http.Handler`) подключено ко всем маршрутам и выводит в консоль метод, путь и длительность обработки запроса:
+
+```text
+2026/10/29 00:13:50 GET /api/transactions 0s
+2026/10/29 00:18:24 POST /api/transactions 0s
+```
+
+Запросы обрабатываются за микросекунды. На Windows разрешения таймера иногда не хватает, и длительность показывается как `0s`; на Linux/macOS выводится, например, `52µs`.
+
+## Бизнес-логика Ledger
+
+1. **Модели данных**:
+   - `Transaction`: поля `ID`, `Amount`, `Category`, `Description`, `Date`.
+   - `Budget`: поля `Category` и `Limit`.
+2. **Хранение в памяти**:
+   - Транзакции: срез `[]Transaction` с автоинкрементом идентификаторов.
+   - Бюджеты: `map[string]Budget`, ключ — название категории.
+3. **Контроль лимитов**: если для категории задан бюджет, `AddTransaction` суммирует траты с учётом новой операции. При превышении лимита возвращается сигнальная ошибка `ErrBudgetExceeded`, и транзакция не сохраняется. Gateway распознаёт её через `errors.Is` и отвечает `409 Conflict`.
+4. **Импорт бюджетов (`LoadBudgets`)**: читает JSON-массив бюджетов из любого `io.Reader`, каждый бюджет проходит валидацию.
+5. **Валидация (`Validatable`)**:
+
+   ```go
+   type Validatable interface {
+       Validate() error
+   }
+   ```
+
+   - `Transaction.Validate()`: `Amount > 0`, `Category` не пустая.
+   - `Budget.Validate()`: `Limit > 0`, `Category` не пустая.
+   - `CheckValid(v Validatable) error` — полиморфная проверка любого объекта, реализующего интерфейс.
 
 ### Формат файла `budgets.json`
 
-Файл размещается в каталоге `ledger/budgets.json`:
-
 ```json
 [
-  {
-    "category": "еда",
-    "limit": 5000
-  },
-  {
-    "category": "развлечения",
-    "limit": 2000
-  }
+  { "category": "еда", "limit": 5000 },
+  { "category": "развлечения", "limit": 2000 }
 ]
 ```
-
-## Инструкция по запуску
-
-Проект построен по принципу монорепозитория с независимыми модулями, поэтому каждый сервис запускается отдельно из своей директории.
-
-### 1. Запуск сервиса Gateway
-
-Сервис запускает веб-сервер на порту `:8080`.
-
-1. Откройте терминал и перейдите в папку сервиса:
-   ```bash
-   cd gateway
-   ```
-2. Запустите сервис:
-   ```bash
-   go run .
-   ```
-   *Сервер останется активным в терминале и будет ожидать входящие сетевые запросы.*
-
-#### Проверка работы Gateway
-
-Во второй вкладке терминала отправьте GET-запрос:
-
-```bash
-# Через curl:
-curl http://localhost:8080/ping
-
-# Или в браузере:
-http://localhost:8080/ping
-```
-
-**Ожидаемый ответ:**
-```text
-pong
-```
-*(HTTP-статус: `200 OK`)*
-
-### 2. Запуск сервиса Ledger
-
-1. Откройте терминал и перейдите в папку сервиса:
-   ```bash
-   cd ledger
-   ```
-2. Убедитесь, что в каталоге присутствует файл `budgets.json`.
-3. Запустите сервис:
-   ```bash
-   go run .
-   ```
-
-**Ожидаемый вывод:**
-```text
-Ledger service started
-Budgets loaded
-Error adding transaction: Expenses amount is greater than budget limit
-Error adding transaction: Amount must be greater than zero
-{1 4600.5 еда Покупка в супермаркете 2026-10-04 18:04:52 +0300 MSK}
-{2 3000 Транспорт Проездной на месяц 2026-10-04 18:04:52 +0300 MSK}
-------------------------
-Polymorphism test
-CheckValid(testTx) found error: Amount must be greater than zero
-CheckValid(testBudget) found error: Category cannot be empty
-```
-
-*Операция, превысившая лимит бюджета, была отклонена с ошибкой и не попала в итоговый срез транзакций.*
