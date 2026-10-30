@@ -12,18 +12,21 @@ go_task2/
 ├── go.work                    # объединяет модули gateway и ledger
 ├── gateway/                   # HTTP-слой
 │   ├── go.mod
-│   ├── main.go                # роутер, маршруты, запуск сервера на :8080
+│   ├── main.go                # запуск сервера на :8080
 │   └── internal/api/
 │       ├── dto.go             # DTO запросов/ответов и функции-преобразователи
 │       ├── handlers.go        # обработчики эндпоинтов, writeJSON / writeError
-│       └── middleware.go      # middleware логирования запросов
-├── ledger/                    # бизнес-логика
+│       ├── handlers_test.go   # интеграционные HTTP-тесты (httptest)
+│       ├── middleware.go      # middleware логирования запросов
+│       └── router.go          # NewRouter: маршруты /api/... + middleware
+├── ledger/                    # бизнес-логика (библиотека)
 │   ├── go.mod
 │   ├── budget.go              # Budget, SetBudget, ListBudgets, LoadBudgets
 │   ├── transaction.go         # Transaction, AddTransaction, ListTransactions, ErrBudgetExceeded
 │   ├── validatable.go         # интерфейс Validatable и функция CheckValid
-│   ├── budgets.json           # пример файла с лимитами категорий
-│   └── main.go
+│   ├── reset.go               # Reset: очистка данных в памяти (для тестов)
+│   ├── ledger_test.go         # unit-тесты домена
+│   └── budgets.json           # пример файла с лимитами категорий
 ├── .gitignore
 └── README.md
 ```
@@ -86,7 +89,7 @@ curl -X POST http://localhost:8080/api/transactions \
 Ответ `201 Created`:
 
 ```json
-{"id":1,"amount":450,"category":"еда","description":"ланч","date":"2025-09-10T00:00:00Z"}
+{"id":1,"amount":450,"category":"еда","description":"ланч","date":"2025-09-10"}
 ```
 
 Ошибка валидации, `400 Bad Request`:
@@ -148,6 +151,40 @@ curl http://localhost:8080/api/budgets
 ### Проверка в Windows PowerShell
 
 В PowerShell `curl` — это псевдоним `Invoke-WebRequest`, поэтому для примеров выше используйте `curl.exe` или Git Bash.
+
+## Тесты
+
+Тесты написаны на стандартной библиотеке `testing`, без сторонних зависимостей.
+
+**Unit-тесты домена** (`ledger/ledger_test.go`):
+- `TestTransactionValidate`, `TestBudgetValidate` — табличные тесты валидации (корректные данные, нулевые и отрицательные значения, пустая категория). Выполняются параллельно (`t.Parallel()`).
+- `TestBudgetLimit` — сценарий «бюджет → транзакция в пределах лимита → превышение»: проверяется ошибка `ErrBudgetExceeded` и то, что отклонённая транзакция не сохранилась.
+
+**Интеграционные тесты HTTP** (`gateway/internal/api/handlers_test.go`) прогоняют запросы через настоящий роутер (`NewRouter`) с помощью `httptest`:
+- `TestBudgetsAPI` — подтесты `create`, `list`, `bad_json`, `invalid_limit`;
+- `TestTransactionsAPI` — подтесты `ok`, `list`, `exceeded` (409), `bad_json` (400).
+
+В каждом тесте проверяются статус, заголовок `Content-Type: application/json; charset=utf-8` и тело ответа. Перед тестами, меняющими данные, вызывается `ledger.Reset()`, а после — `t.Cleanup(ledger.Reset)`, чтобы сценарии не влияли друг на друга.
+
+### Запуск
+
+Из корня проекта (из-за `go.work` указываются имена модулей, а не `./...`):
+
+```bash
+go test gateway/... ledger/... -v
+```
+
+Покрытие и HTML-отчёт:
+
+```bash
+go test gateway/... ledger/... -cover -coverprofile=cover.out
+go tool cover -func=cover.out
+go tool cover -html=cover.out -o cover.html
+```
+
+> В PowerShell аргументы с `=` берите в кавычки: `"-coverprofile=cover.out"`, `"-func=cover.out"`, `"-html=cover.out"`.
+
+**Покрытие тестами: ~77%** (`gateway/internal/api` — 87.1%, `ledger` — 62.2%).
 
 ## Логирование
 

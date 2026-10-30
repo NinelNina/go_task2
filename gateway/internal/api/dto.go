@@ -13,11 +13,11 @@ type CreateTransactionRequest struct {
 }
 
 type TransactionResponse struct {
-	ID          int       `json:"id"`
-	Amount      float64   `json:"amount"`
-	Category    string    `json:"category"`
-	Description string    `json:"description"`
-	Date        time.Time `json:"date"`
+	ID          int     `json:"id"`
+	Amount      float64 `json:"amount"`
+	Category    string  `json:"category"`
+	Description string  `json:"description"`
+	Date        string  `json:"date"`
 }
 
 type CreateBudgetRequest struct {
@@ -48,9 +48,9 @@ func FromTransaction(t ledger.Transaction) TransactionResponse {
 	return TransactionResponse{
 		ID:          t.ID,
 		Amount:      t.Amount,
-		Category: t.Category,
+		Category:    t.Category,
 		Description: t.Description,
-		Date:        t.Date,
+		Date:        t.Date.Format("2006-01-02"),
 	}
 }
 
@@ -64,9 +64,6 @@ func ToBudget(bReq CreateBudgetRequest) ledger.Budget {
 func FromBudget(b ledger.Budget) BudgetResponse {
 	return BudgetResponse{
 		Category: b.Category,
-		Limit: b.Limit,
+		Limit:    b.Limit,
 	}
 }
-
-
-
